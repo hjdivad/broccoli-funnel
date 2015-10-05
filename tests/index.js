@@ -4,7 +4,7 @@ var fs = require('fs');
 var path = require('path');
 var RSVP = require('rsvp');
 var expect = require('expect.js');
-var walkSync = require('walk-sync-matcher');
+var walkSync = require('walk-sync');
 var broccoli = require('broccoli');
 var rimraf = RSVP.denodeify(require('rimraf'));
 
@@ -20,6 +20,33 @@ describe('broccoli-funnel', function(){
     if (builder) {
       return builder.cleanup();
     }
+  });
+
+  describe('rebuilding', function() {
+
+    it('correctly rebuilds', function() {
+      var inputPath = path.join(fixturePath, 'dir1');
+      var node = new Funnel(inputPath, {
+        include: ['**/*.js']
+      });
+
+      builder = new broccoli.Builder(node);
+      return builder.build()
+        .then(function(results) {
+          var outputPath = results.directory;
+
+          expect(walkSync(outputPath, ['**/*.js'])).to.eql(walkSync(inputPath, ['**/*.js']));
+
+          var mutatedFile = inputPath + '/' + 'subdir1/subsubdir2/some.js';
+          fs.writeFileSync(mutatedFile, fs.readFileSync(mutatedFile));
+          return builder.build();
+        })
+        .then(function(results) {
+          var outputPath = results.directory;
+
+          expect(walkSync(outputPath, ['**/*.js'])).to.eql(walkSync(inputPath, ['**/*.js']));
+        });
+    });
   });
 
   describe('processFile', function() {
@@ -51,13 +78,19 @@ describe('broccoli-funnel', function(){
         processFile: function(sourcePath, destPath, relativePath) {
           var relSourcePath = sourcePath.replace(this.inputPaths[0], '__input_path__');
           var relDestPath = destPath.replace(this.outputPath, '__output_path__');
-          processFileArguments.push([relSourcePath, relDestPath, relativePath]);
+
+          processFileArguments.push([
+            relSourcePath,
+            relDestPath,
+            relativePath
+          ]);
         }
       });
 
       builder = new broccoli.Builder(node);
       return builder.build()
       .then(function(results) {
+
         var expected = [
           [ path.join('__input_path__', 'subdir1/subsubdir1/foo.png'),
             path.join('__output_path__', 'foo/subdir1/subsubdir1/foo.png'),
@@ -87,7 +120,13 @@ describe('broccoli-funnel', function(){
       .then(function(results) {
         var outputPath = results.directory;
 
-        expect(walkSync(outputPath)).to.eql([]);
+        expect(walkSync(outputPath)).to.eql([
+          // only folders exist
+          'foo/',
+          'foo/subdir1/',
+          'foo/subdir1/subsubdir1/',
+          'foo/subdir1/subsubdir2/'
+        ]);
       });
     });
 
@@ -107,7 +146,13 @@ describe('broccoli-funnel', function(){
       .then(function(results) {
         var outputPath = results.directory;
 
-        expect(walkSync(outputPath)).to.eql([]);
+        expect(walkSync(outputPath)).to.eql([
+          // only dir exist
+          'foo/',
+          'foo/subdir1/',
+          'foo/subdir1/subsubdir1/',
+          'foo/subdir1/subsubdir2/'
+        ]);
       });
     });
 
@@ -242,7 +287,10 @@ describe('broccoli-funnel', function(){
       return builder.build()
         .then(function(results) {
           var outputPath = results.directory;
-          expect(walkSync(outputPath)).to.eql(['bar.css']);
+
+          expect(walkSync(outputPath)).to.eql([
+            'bar.css'
+          ]);
         });
     });
 
@@ -358,20 +406,26 @@ describe('broccoli-funnel', function(){
     describe('filtering with a `files` function', function() {
       it('can take files as a function', function() {
         var inputPath = path.join(fixturePath, 'dir1');
-        var filesCounter = 0;
         var filesByCounter = [
+          // rebuild 1:
           [
             'subdir1/subsubdir1/foo.png',
             'subdir2/bar.css'
           ],
+
+          // rebuild 2:
           [ 'subdir1/subsubdir1/foo.png' ],
+
+          // rebuild 3:
           [],
+
+          // rebuild 4:
           ['subdir1/subsubdir2/some.js']
         ];
 
         var tree = new Funnel(inputPath, {
           files: function() {
-            return filesByCounter[filesCounter++];
+            return filesByCounter.shift();
           }
         });
 

@@ -3,12 +3,14 @@
 var fs = require('fs');
 var path = require('path');
 var mkdirp = require('mkdirp');
-var walkSync = require('walk-sync-matcher');
+var walkSync = require('walk-sync');
 var Minimatch = require('minimatch').Minimatch;
 var arrayEqual = require('array-equal');
 var Plugin = require('broccoli-plugin');
 var symlinkOrCopy = require('symlink-or-copy');
 var debug = require('debug');
+var FSTree = require('fs-tree-diff');
+var rimraf = require('rimraf');
 
 function makeDictionary() {
   var cache = Object.create(null);
@@ -25,8 +27,11 @@ function Funnel(inputNode, options) {
 
   Plugin.call(this, [inputNode]);
 
+  this._persistentOutput = true;
+
   this._includeFileCache = makeDictionary();
   this._destinationPathCache = makeDictionary();
+  this._currentTree = new FSTree();
 
   var keys = Object.keys(options || {});
   for (var i = 0, l = keys.length; i < l; i++) {
@@ -35,6 +40,7 @@ function Funnel(inputNode, options) {
   }
 
   this.destDir = this.destDir || '/';
+  this.count = 0;
 
   if (this.files && typeof this.files === 'function') {
     // Save dynamic files func as a different variable and let the rest of the code
@@ -129,7 +135,7 @@ Funnel.prototype.build = function() {
   if (this.shouldLinkRoots()) {
     linkedRoots = true;
     if (fs.existsSync(inputPath)) {
-      fs.rmdirSync(this.outputPath);
+      rimraf.sync(this.outputPath);
       this._copy(inputPath, this.destPath);
     } else if (this.allowEmpty) {
       mkdirp.sync(this.destPath);
@@ -146,42 +152,126 @@ Funnel.prototype.build = function() {
   });
 };
 
+function ensureRelative(string) {
+  if (string.charAt(0) === '/') {
+    return string.substring(1);
+  }
+  return string;
+}
+
+Funnel.prototype._processEntries = function(entries) {
+  return entries.filter(function(entry) {
+    // support the second set of filters walk-sync does not support
+    //   * regexp
+    //   * excludes
+    return this.includeFile(entry.relativePath);
+  }, this).map(function(entry) {
+
+    var relativePath = entry.relativePath;
+
+    // the destination paths "absolute" is actually stlil relative to the FSTree
+    entry.relativePath = ensureRelative(this.lookupDestinationPath(path.join(this.destDir, relativePath)));
+
+    this.outputToInputMappings[entry.relativePath] = relativePath;
+
+    return entry;
+  }, this);
+};
+
+Funnel.prototype._processPaths  = function(paths, outputToInputMappings) {
+  return paths.
+    slice(0).
+    filter(this.includeFile, this).
+    map(function(relativePath) {
+      var output = ensureRelative(this.lookupDestinationPath(path.join(this.destDir, relativePath)));
+      this.outputToInputMappings[output] = relativePath;
+      return output;
+    }, this);
+};
+
 Funnel.prototype.processFilters = function(inputPath) {
-  var files;
+  var nextTree;
+
+  this.outputToInputMappings = {}; // we allow users to rename files
 
   if (this.files && !this.exclude && !this.include) {
-    files = this.files.slice(0); //clone to be compatible with walkSync
+    // clone to be compatible with walkSync
+    nextTree = FSTree.fromPaths(this._processPaths(this.files));
   } else {
+    var entries;
+
     if (this._matchedWalk) {
-      files = walkSync(inputPath, undefined, this.include);
+      entries = walkSync.entries(inputPath, undefined, this.include);
     } else {
-      files = walkSync(inputPath);
+      entries = walkSync.entries(inputPath);
     }
+
+    nextTree = new FSTree({
+      entries: this._processEntries(entries)
+    });
   }
 
-  var relativePath, destRelativePath, fullInputPath, fullOutputPath;
+  var patch = this._currentTree.calculatePatch(nextTree);
 
-  var count = 0;
-  for (var i = 0, l = files.length; i < l; i++) {
-    relativePath = files[i];
+  this._currentTree = nextTree;
 
-    if (this.includeFile(relativePath)) {
-      count++;
-      fullInputPath    = path.join(inputPath, relativePath);
-      destRelativePath = this.lookupDestinationPath(relativePath);
-      fullOutputPath   = path.join(this.destPath, destRelativePath);
+  this._debug('patch: %o', patch);
 
-      this.processFile(fullInputPath, fullOutputPath, relativePath);
-    }
-  }
+  var outputPath = this.outputPath;
+
+  patch.forEach(function(entry) {
+    this._applyPatch(entry, inputPath, outputPath);
+  }, this);
+
+  var count = nextTree.size;
 
   this._debug('processFilters %o', {
     in: new Date() - this._buildStart + 'ms',
-    filesFound: files.length,
+    filesFound: this._currentTree.size,
     filesProcessed: count,
+    operations: patch.length,
     inputPath: inputPath,
     destPath: this.destPath
   });
+};
+
+Funnel.prototype._applyPatch = function applyPatch(entry, inputPath, _outputPath) {
+  var outputToInput = this.outputToInputMappings;
+  var operation = entry[0];
+  var outputRelative = entry[1];
+
+  if (!outputRelative) {
+    // broccoli itself maintains the roots, we can skip any operation on them
+    return;
+  }
+
+  var outputPath = _outputPath + '/' + outputRelative;
+
+  this._debug('%s %s', operation, outputPath);
+
+  if (operation === 'change') {
+    operation = 'create';
+  }
+
+  switch (operation) {
+    case 'unlink' :
+      fs.unlinkSync(outputPath);
+    break;
+    case 'rmdir'  :
+      fs.rmdirSync(outputPath);
+    break;
+    case 'mkdir'  :
+      fs.mkdirSync(outputPath);
+    break;
+    case 'create'/* also change */ :
+      var relativePath = outputToInput[outputRelative];
+      if (relativePath === undefined) {
+        relativePath = outputToInput['/' + outputRelative];
+      }
+      this.processFile(inputPath + '/' + relativePath, outputPath, relativePath);
+      break;
+    default: throw new Error('Unknown operation: ' + operation);
+  }
 };
 
 Funnel.prototype.lookupDestinationPath = function(relativePath) {
@@ -264,12 +354,21 @@ Funnel.prototype.processFile = function(sourcePath, destPath /*, relativePath */
 };
 
 Funnel.prototype._copy = function(sourcePath, destPath) {
-  var destDir  = path.dirname(destPath);
-  if (!fs.existsSync(destDir)) {
-    mkdirp.sync(destDir);
-  }
+  var destDir = path.dirname(destPath);
 
-  symlinkOrCopy.sync(sourcePath, destPath);
+  try {
+    symlinkOrCopy.sync(sourcePath, destPath);
+  } catch(e) {
+    if (!fs.existsSync(destDir)) {
+      mkdirp.sync(destDir);
+    }
+    try {
+      fs.unlinkSync(destPath);
+    } catch(e) {
+
+    }
+    symlinkOrCopy.sync(sourcePath, destPath);
+  }
 };
 
 module.exports = Funnel;
