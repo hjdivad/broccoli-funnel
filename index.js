@@ -248,6 +248,11 @@ Funnel.prototype._applyPatch = function applyPatch(entry, inputPath, _outputPath
   var outputPath = _outputPath + '/' + outputRelative;
 
   this._debug('%s %s', operation, outputPath);
+
+  if (operation === 'change') {
+    operation = 'create';
+  }
+
   switch (operation) {
     case 'unlink' :
       fs.unlinkSync(outputPath);
@@ -267,7 +272,7 @@ Funnel.prototype._applyPatch = function applyPatch(entry, inputPath, _outputPath
       break;
     default: throw new Error('Unknown operation: ' + operation);
   }
-}
+};
 
 Funnel.prototype.lookupDestinationPath = function(relativePath) {
   if (this._destinationPathCache[relativePath] !== undefined) {
@@ -356,6 +361,11 @@ Funnel.prototype._copy = function(sourcePath, destPath) {
   } catch(e) {
     if (!fs.existsSync(destDir)) {
       mkdirp.sync(destDir);
+    }
+    try {
+      fs.unlinkSync(destPath);
+    } catch(e) {
+
     }
     symlinkOrCopy.sync(sourcePath, destPath);
   }
