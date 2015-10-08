@@ -39,7 +39,7 @@ function Funnel(inputNode, options) {
     this[key] = options[key];
   }
 
-  this.destDir = this.destDir || '/';
+  this.destDir = this.destDir || path.sep;
   this.count = 0;
 
   if (this.files && typeof this.files === 'function') {
@@ -112,7 +112,7 @@ Funnel.prototype.shouldLinkRoots = function() {
 Funnel.prototype.build = function() {
   this._buildStart = new Date();
   this.destPath = path.join(this.outputPath, this.destDir);
-  if (this.destPath[this.destPath.length -1] === '/') {
+  if (this.destPath[this.destPath.length -1] === path.sep) {
     this.destPath = this.destPath.slice(0, -1);
   }
 
@@ -153,7 +153,7 @@ Funnel.prototype.build = function() {
 };
 
 function ensureRelative(string) {
-  if (string.charAt(0) === '/') {
+  if (string.charAt(0) === path.sep) {
     return string.substring(1);
   }
   return string;
@@ -178,7 +178,7 @@ Funnel.prototype._processEntries = function(entries) {
   }, this);
 };
 
-Funnel.prototype._processPaths  = function(paths, outputToInputMappings) {
+Funnel.prototype._processPaths = function(paths, outputToInputMappings) {
   return paths.
     slice(0).
     filter(this.includeFile, this).
@@ -245,7 +245,7 @@ Funnel.prototype._applyPatch = function applyPatch(entry, inputPath, _outputPath
     return;
   }
 
-  var outputPath = _outputPath + '/' + outputRelative;
+  var outputPath = _outputPath + path.sep + outputRelative;
 
   this._debug('%s %s', operation, outputPath);
 
@@ -266,9 +266,9 @@ Funnel.prototype._applyPatch = function applyPatch(entry, inputPath, _outputPath
     case 'create'/* also change */ :
       var relativePath = outputToInput[outputRelative];
       if (relativePath === undefined) {
-        relativePath = outputToInput['/' + outputRelative];
+        relativePath = outputToInput[path.sep + outputRelative];
       }
-      this.processFile(inputPath + '/' + relativePath, outputPath, relativePath);
+      this.processFile(inputPath + path.sep + relativePath, outputPath, relativePath);
       break;
     default: throw new Error('Unknown operation: ' + operation);
   }
@@ -294,7 +294,7 @@ Funnel.prototype.includeFile = function(relativePath) {
   }
 
   // do not include directories, only files
-  if (relativePath[relativePath.length - 1] === '/') {
+  if (relativePath[relativePath.length - 1] === path.sep) {
     return includeFileCache[relativePath] = false;
   }
 

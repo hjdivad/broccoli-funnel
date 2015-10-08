@@ -12,7 +12,7 @@ require('mocha-jshint')();
 
 var Funnel = require('..');
 
-describe('broccoli-funnel', function(){
+describe('broccoli-funnel', function() {
   var fixturePath = path.join(__dirname, 'fixtures');
   var builder;
 
@@ -95,9 +95,9 @@ describe('broccoli-funnel', function(){
           [ path.join('__input_path__', 'subdir1/subsubdir1/foo.png'),
             path.join('__output_path__', 'foo/subdir1/subsubdir1/foo.png'),
             'subdir1/subsubdir1/foo.png' ],
-            [ path.join('__input_path__', 'subdir1/subsubdir2/some.js'),
-              path.join('__output_path__', 'foo/subdir1/subsubdir2/some.js'),
-              'subdir1/subsubdir2/some.js' ]
+          [ path.join('__input_path__', 'subdir1/subsubdir2/some.js'),
+            path.join('__output_path__', 'foo/subdir1/subsubdir2/some.js'),
+            'subdir1/subsubdir2/some.js' ]
         ];
 
         expect(processFileArguments).to.eql(expected);
